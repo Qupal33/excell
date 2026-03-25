@@ -1,0 +1,48 @@
+{
+  "name": "acbk-sales-finance-reports",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Локальное приложение для формирования отчетов отдела продаж АО \"Архангельский ЦБК\"",
+  "author": "Codex",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win portable",
+    "dist:dir": "electron-builder --dir"
+  },
+  "build": {
+    "appId": "ru.acbk.sales.finance",
+    "productName": "Финансы продаж АЦБК",
+    "directories": {
+      "output": "dist"
+    },
+    "files": [
+      "index.html",
+      "styles.css",
+      "renderer.js",
+      "main.js",
+      "preload.js",
+      "report-builder.js",
+      "package.json"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "portable",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "finance-sales-reports-${version}.exe"
+    }
+  },
+  "dependencies": {
+    "exceljs": "^4.4.0",
+    "xlsx": "^0.18.5"
+  },
+  "devDependencies": {
+    "electron": "^36.2.0",
+    "electron-builder": "^24.13.3"
+  }
+}
