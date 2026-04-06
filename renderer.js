@@ -1,6 +1,7 @@
 const state = {
   reports: [],
   activeReportId: null,
+  totalReportsGenerated: 0,
   files: {},
   parameters: {},
   status: {
@@ -63,7 +64,7 @@ function renderHome() {
         </p>
       </div>
       <div class="hero-panel">
-        <div class="hero-metric">1</div>
+        <div class="hero-metric">${escapeHtml(state.totalReportsGenerated)}</div>
         <div>
           <strong>Доступный отчёт</strong>
           <p>Стартовая версия уже содержит сценарий для отчёта "Деньги ВР _март".</p>
@@ -117,6 +118,66 @@ function renderStatus() {
     <div class="status status-${escapeHtml(state.status.type || "info")}">
       ${escapeHtml(state.status.text)}
     </div>
+  `;
+}
+
+function renderHomeWithStats() {
+  return `
+    <section class="hero">
+      <div class="hero-copy">
+        <span class="hero-kicker">АО "Архангельский ЦБК"</span>
+        <h1>Формирование финансовых отчётов отдела продаж</h1>
+        <p>
+          Локальное приложение работает на компьютере пользователя, принимает Excel-файлы,
+          собирает итоговый документ и сохраняет его в выбранную папку.
+        </p>
+      </div>
+      <div class="hero-panel">
+        <div class="hero-metric">${escapeHtml(state.totalReportsGenerated)}</div>
+        <div>
+          <strong>Сформировано отчётов</strong>
+          <p>
+            Приложение хранит общее количество успешно сохранённых отчётов за всё время
+            использования.
+          </p>
+        </div>
+      </div>
+    </section>
+
+    <section class="section">
+      <div class="section-head">
+        <div>
+          <span class="section-label">Выбор сценария</span>
+          <h2>Какой отчёт необходимо сформировать</h2>
+        </div>
+      </div>
+      <div class="report-grid">
+        ${state.reports
+          .map(
+            (report) => `
+              <article class="report-card">
+                <div class="report-card-top">
+                  <span class="report-tag">${escapeHtml(report.code)}</span>
+                  <span class="report-stage">${escapeHtml(report.stageLabel)}</span>
+                </div>
+                <h3>${escapeHtml(report.name)}</h3>
+                <p>${escapeHtml(report.description)}</p>
+                <ul class="report-meta">
+                  ${report.sources
+                    .map((source) => `<li>${escapeHtml(source.label)}</li>`)
+                    .join("")}
+                </ul>
+                <button class="primary-button" data-action="open-report" data-report-id="${escapeHtml(
+                  report.id
+                )}">
+                  Открыть форму
+                </button>
+              </article>
+            `
+          )
+          .join("")}
+      </div>
+    </section>
   `;
 }
 
@@ -237,7 +298,7 @@ function render() {
           </div>
         </div>
       </header>
-      ${report ? renderReportForm(report) : renderHome()}
+      ${report ? renderReportForm(report) : renderHomeWithStats()}
     </main>
   `;
 
@@ -287,7 +348,7 @@ function bindEvents() {
   const generateButton = document.querySelector("[data-action='generate-report']");
 
   if (generateButton) {
-    generateButton.addEventListener("click", handleGenerateReport);
+    generateButton.addEventListener("click", handleGenerateReportWithStats);
   }
 }
 
@@ -322,8 +383,46 @@ async function handleGenerateReport() {
   setStatus("error", response.error || "Не удалось сформировать отчёт.");
 }
 
+async function handleGenerateReportWithStats() {
+  const report = getActiveReport();
+
+  if (!report || state.busy) {
+    return;
+  }
+
+  state.busy = true;
+  render();
+
+  const response = await window.reportApp.generateReport({
+    reportId: report.id,
+    files: state.files,
+    parameters: state.parameters
+  });
+
+  state.busy = false;
+
+  if (response.success) {
+    state.totalReportsGenerated = Number.isFinite(response.totalReportsGenerated)
+      ? response.totalReportsGenerated
+      : state.totalReportsGenerated;
+    setStatus("success", `Отчёт сохранён: ${response.savedTo}. Всего сформировано: ${state.totalReportsGenerated}.`);
+    return;
+  }
+
+  if (response.canceled) {
+    setStatus("warning", "Сохранение отменено пользователем.");
+    return;
+  }
+
+  setStatus("error", response.error || "Не удалось сформировать отчёт.");
+}
+
 async function init() {
   state.reports = await window.reportApp.listReports();
+  const stats = await window.reportApp.getStats();
+  state.totalReportsGenerated = Number.isFinite(stats?.totalReportsGenerated)
+    ? stats.totalReportsGenerated
+    : 0;
   render();
 }
 
