@@ -4,6 +4,8 @@
 
 ## Запуск
 
+Требуется установленный `Node.js`.
+
 ```bash
 npm install
 npm start
