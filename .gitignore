@@ -1,5 +1,3 @@
-node_modules/
-dist/
 dist_refresh/
 
 *.log
