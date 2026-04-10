@@ -7,11 +7,12 @@
   "main": "main.js",
   "scripts": {
     "start": "electron .",
-    "dist": "electron-builder --win portable",
+    "dist": "electron-builder --win portable --config.win.signAndEditExecutable=false",
     "dist:dir": "electron-builder --dir"
   },
   "build": {
     "appId": "ru.acbk.sales.finance",
+    "icon": "build/icon.ico",
     "productName": "Финансы продаж АЦБК",
     "directories": {
       "output": "dist"
@@ -26,6 +27,7 @@
       "package.json"
     ],
     "win": {
+      "signAndEditExecutable": false,
       "target": [
         {
           "target": "portable",
