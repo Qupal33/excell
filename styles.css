@@ -317,6 +317,45 @@ button {
   box-shadow: 0 0 0 4px rgba(32, 78, 54, 0.08);
 }
 
+.date-input-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto;
+  gap: 10px;
+  align-items: center;
+}
+
+.date-input {
+  min-width: 0;
+}
+
+.date-picker-button,
+.date-today-button {
+  white-space: nowrap;
+}
+
+.date-preview {
+  margin-top: 18px;
+  padding: 16px 18px;
+  border-radius: 20px;
+  display: grid;
+  gap: 6px;
+  background: linear-gradient(135deg, rgba(220, 233, 223, 0.82), rgba(255, 250, 241, 0.92));
+  border: 1px solid rgba(32, 78, 54, 0.14);
+  color: var(--accent-strong);
+}
+
+.date-preview strong {
+  font-size: 18px;
+}
+
+.date-preview span {
+  color: var(--muted);
+}
+
+.date-preview-muted {
+  background: rgba(255, 250, 241, 0.82);
+}
+
 .action-row {
   margin-top: 24px;
   display: flex;
@@ -428,6 +467,10 @@ button {
   }
 
   .source-item {
+    grid-template-columns: 1fr;
+  }
+
+  .date-input-row {
     grid-template-columns: 1fr;
   }
 

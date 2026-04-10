@@ -11,6 +11,21 @@ const state = {
   busy: false
 };
 
+const MONTH_NAMES = [
+  "январь",
+  "февраль",
+  "март",
+  "апрель",
+  "май",
+  "июнь",
+  "июль",
+  "август",
+  "сентябрь",
+  "октябрь",
+  "ноябрь",
+  "декабрь"
+];
+
 function escapeHtml(value) {
   return String(value)
     .replaceAll("&", "&amp;")
@@ -29,6 +44,69 @@ function basename(filePath) {
 
 function getActiveReport() {
   return state.reports.find((report) => report.id === state.activeReportId) || null;
+}
+
+function padToTwoDigits(value) {
+  return String(value).padStart(2, "0");
+}
+
+function getTodayIsoDate() {
+  const today = new Date();
+
+  return `${today.getFullYear()}-${padToTwoDigits(today.getMonth() + 1)}-${padToTwoDigits(
+    today.getDate()
+  )}`;
+}
+
+function getDatePreview(value) {
+  const normalizedValue = String(value || "").trim();
+  const match = normalizedValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+  if (!match) {
+    return null;
+  }
+
+  const year = Number(match[1]);
+  const monthIndex = Number(match[2]) - 1;
+  const day = Number(match[3]);
+  const date = new Date(year, monthIndex, day);
+
+  if (
+    Number.isNaN(date.getTime()) ||
+    date.getFullYear() !== year ||
+    date.getMonth() !== monthIndex ||
+    date.getDate() !== day
+  ) {
+    return null;
+  }
+
+  const monthName = MONTH_NAMES[monthIndex];
+
+  return {
+    displayDate: `${padToTwoDigits(day)}.${padToTwoDigits(monthIndex + 1)}.${year}`,
+    monthName,
+    titleMonthName: monthName.charAt(0).toUpperCase() + monthName.slice(1),
+    sheetName: `${monthName} ${year}`
+  };
+}
+
+function getSourceSelectionText(source, hasValue) {
+  const isDirectory = source?.selectionType === "directory";
+
+  if (hasValue) {
+    return isDirectory ? "Выбрать другую папку" : "Заменить файл";
+  }
+
+  return isDirectory ? "Выбрать папку" : "Выбрать файл";
+}
+
+function getSourcePlaceholderText(source) {
+  return source?.selectionType === "directory" ? "Папка не выбрана" : "Файл не выбран";
+}
+
+function getPickedSourceText(source, filePath) {
+  const itemType = source?.selectionType === "directory" ? "Папка" : "Файл";
+  return `${itemType} выбрана: ${basename(filePath)}`;
 }
 
 function setStatus(type, text) {
@@ -52,63 +130,6 @@ function resetReportState(reportId) {
   }
 }
 
-function renderHome() {
-  return `
-    <section class="hero">
-      <div class="hero-copy">
-        <span class="hero-kicker">АО "Архангельский ЦБК"</span>
-        <h1>Формирование финансовых отчётов отдела продаж</h1>
-        <p>
-          Локальное приложение работает на компьютере пользователя, принимает Excel-файлы,
-          собирает итоговый документ и сохраняет его в выбранную папку.
-        </p>
-      </div>
-      <div class="hero-panel">
-        <div class="hero-metric">${escapeHtml(state.totalReportsGenerated)}</div>
-        <div>
-          <strong>Доступный отчёт</strong>
-          <p>Стартовая версия уже содержит сценарий для отчёта "Деньги ВР _март".</p>
-        </div>
-      </div>
-    </section>
-
-    <section class="section">
-      <div class="section-head">
-        <div>
-          <span class="section-label">Выбор сценария</span>
-          <h2>Какой отчёт необходимо сформировать</h2>
-        </div>
-      </div>
-      <div class="report-grid">
-        ${state.reports
-          .map(
-            (report) => `
-              <article class="report-card">
-                <div class="report-card-top">
-                  <span class="report-tag">${escapeHtml(report.code)}</span>
-                  <span class="report-stage">${escapeHtml(report.stageLabel)}</span>
-                </div>
-                <h3>${escapeHtml(report.name)}</h3>
-                <p>${escapeHtml(report.description)}</p>
-                <ul class="report-meta">
-                  ${report.sources
-                    .map((source) => `<li>${escapeHtml(source.label)}</li>`)
-                    .join("")}
-                </ul>
-                <button class="primary-button" data-action="open-report" data-report-id="${escapeHtml(
-                  report.id
-                )}">
-                  Открыть форму
-                </button>
-              </article>
-            `
-          )
-          .join("")}
-      </div>
-    </section>
-  `;
-}
-
 function renderStatus() {
   if (!state.status.text) {
     return "";
@@ -121,6 +142,33 @@ function renderStatus() {
   `;
 }
 
+function renderDatePreview(report) {
+  const dateParameter = report.parameters.find((parameter) => parameter.id === "reportDate");
+
+  if (!dateParameter) {
+    return "";
+  }
+
+  const preview = getDatePreview(state.parameters[dateParameter.id]);
+
+  if (!preview) {
+    return `
+      <div class="date-preview date-preview-muted">
+        <strong>Месяц отчёта</strong>
+        <span>Выберите дату через календарь, и приложение сразу подставит нужный месяц и имя листа.</span>
+      </div>
+    `;
+  }
+
+  return `
+    <div class="date-preview">
+      <strong>${escapeHtml(preview.displayDate)}</strong>
+      <span>Месяц отчёта: ${escapeHtml(preview.titleMonthName)}</span>
+      <span>Лист итогового файла: ${escapeHtml(preview.sheetName)}</span>
+    </div>
+  `;
+}
+
 function renderHomeWithStats() {
   return `
     <section class="hero">
@@ -129,7 +177,7 @@ function renderHomeWithStats() {
         <h1>Формирование финансовых отчётов отдела продаж</h1>
         <p>
           Локальное приложение работает на компьютере пользователя, принимает Excel-файлы,
-          собирает итоговый документ и сохраняет его в выбранную папку.
+          находит нужный месячный шаблон и сохраняет готовый отчёт в выбранную папку.
         </p>
       </div>
       <div class="hero-panel">
@@ -137,8 +185,8 @@ function renderHomeWithStats() {
         <div>
           <strong>Сформировано отчётов</strong>
           <p>
-            Приложение хранит общее количество успешно сохранённых отчётов за всё время
-            использования.
+            Сейчас доступен сценарий, в котором месяц отчёта определяется по выбранной дате,
+            а итоговый шаблон подбирается автоматически по имени месяца.
           </p>
         </div>
       </div>
@@ -199,8 +247,8 @@ function renderReportForm(report) {
           <div class="panel-head">
             <span class="panel-index">01</span>
             <div>
-              <h3>Исходные файлы</h3>
-              <p>Для каждого источника выберите Excel-файл с компьютера.</p>
+              <h3>Исходные данные</h3>
+              <p>Для каждого источника выберите Excel-файл или папку с месячными шаблонами.</p>
             </div>
           </div>
 
@@ -222,13 +270,13 @@ function renderReportForm(report) {
                         data-action="pick-file"
                         data-source-id="${escapeHtml(source.id)}"
                       >
-                        ${hasFile ? "Заменить файл" : "Выбрать файл"}
+                        ${escapeHtml(getSourceSelectionText(source, hasFile))}
                       </button>
                       <div class="file-badge ${hasFile ? "file-badge-ready" : ""}">
                         ${
                           hasFile
                             ? escapeHtml(basename(filePath))
-                            : "Файл не выбран"
+                            : escapeHtml(getSourcePlaceholderText(source))
                         }
                       </div>
                     </div>
@@ -244,7 +292,7 @@ function renderReportForm(report) {
             <span class="panel-index">02</span>
             <div>
               <h3>Параметры формирования</h3>
-              <p>Эти поля можно уточнять и расширять по мере детализации бизнес-логики.</p>
+              <p>Пока используется один критерий: дата отчёта, по которой определяется месяц и лист итогового документа.</p>
             </div>
           </div>
 
@@ -254,18 +302,53 @@ function renderReportForm(report) {
                 (parameter) => `
                   <label class="field">
                     <span>${escapeHtml(parameter.label)}</span>
-                    <input
-                      type="text"
-                      data-action="set-parameter"
-                      data-parameter-id="${escapeHtml(parameter.id)}"
-                      value="${escapeHtml(state.parameters[parameter.id] || "")}"
-                      placeholder="${escapeHtml(parameter.placeholder || "")}"
-                    />
+                    ${
+                      parameter.inputType === "date"
+                        ? `
+                          <div class="date-input-row">
+                            <input
+                              class="date-input"
+                              type="date"
+                              data-action="set-parameter"
+                              data-parameter-id="${escapeHtml(parameter.id)}"
+                              value="${escapeHtml(state.parameters[parameter.id] || "")}"
+                              placeholder="${escapeHtml(parameter.placeholder || "")}"
+                            />
+                            <button
+                              type="button"
+                              class="secondary-button date-picker-button"
+                              data-action="open-date-picker"
+                              data-parameter-id="${escapeHtml(parameter.id)}"
+                            >
+                              Календарь
+                            </button>
+                            <button
+                              type="button"
+                              class="ghost-button date-today-button"
+                              data-action="set-today"
+                              data-parameter-id="${escapeHtml(parameter.id)}"
+                            >
+                              Сегодня
+                            </button>
+                          </div>
+                        `
+                        : `
+                          <input
+                            type="${escapeHtml(parameter.inputType || "text")}"
+                            data-action="set-parameter"
+                            data-parameter-id="${escapeHtml(parameter.id)}"
+                            value="${escapeHtml(state.parameters[parameter.id] || "")}"
+                            placeholder="${escapeHtml(parameter.placeholder || "")}"
+                          />
+                        `
+                    }
                   </label>
                 `
               )
               .join("")}
           </div>
+
+          ${renderDatePreview(report)}
 
           ${renderStatus()}
 
@@ -334,7 +417,7 @@ function bindEvents() {
 
       if (!response.canceled && response.filePath) {
         state.files[source.id] = response.filePath;
-        setStatus("info", `Выбран файл: ${basename(response.filePath)}`);
+        setStatus("info", getPickedSourceText(source, response.filePath));
       }
     });
   });
@@ -342,6 +425,34 @@ function bindEvents() {
   document.querySelectorAll("[data-action='set-parameter']").forEach((input) => {
     input.addEventListener("input", () => {
       state.parameters[input.dataset.parameterId] = input.value;
+      render();
+    });
+  });
+
+  document.querySelectorAll("[data-action='open-date-picker']").forEach((button) => {
+    button.addEventListener("click", () => {
+      const input = document.querySelector(
+        `[data-action='set-parameter'][data-parameter-id='${button.dataset.parameterId}']`
+      );
+
+      if (!input) {
+        return;
+      }
+
+      if (typeof input.showPicker === "function") {
+        input.showPicker();
+        return;
+      }
+
+      input.focus();
+      input.click();
+    });
+  });
+
+  document.querySelectorAll("[data-action='set-today']").forEach((button) => {
+    button.addEventListener("click", () => {
+      state.parameters[button.dataset.parameterId] = getTodayIsoDate();
+      render();
     });
   });
 
@@ -350,37 +461,6 @@ function bindEvents() {
   if (generateButton) {
     generateButton.addEventListener("click", handleGenerateReportWithStats);
   }
-}
-
-async function handleGenerateReport() {
-  const report = getActiveReport();
-
-  if (!report || state.busy) {
-    return;
-  }
-
-  state.busy = true;
-  render();
-
-  const response = await window.reportApp.generateReport({
-    reportId: report.id,
-    files: state.files,
-    parameters: state.parameters
-  });
-
-  state.busy = false;
-
-  if (response.success) {
-    setStatus("success", `Отчёт сохранён: ${response.savedTo}`);
-    return;
-  }
-
-  if (response.canceled) {
-    setStatus("warning", "Сохранение отменено пользователем.");
-    return;
-  }
-
-  setStatus("error", response.error || "Не удалось сформировать отчёт.");
 }
 
 async function handleGenerateReportWithStats() {
@@ -405,7 +485,10 @@ async function handleGenerateReportWithStats() {
     state.totalReportsGenerated = Number.isFinite(response.totalReportsGenerated)
       ? response.totalReportsGenerated
       : state.totalReportsGenerated;
-    setStatus("success", `Отчёт сохранён: ${response.savedTo}. Всего сформировано: ${state.totalReportsGenerated}.`);
+    setStatus(
+      "success",
+      `Отчёт сохранён: ${response.savedTo}. Всего сформировано: ${state.totalReportsGenerated}.`
+    );
     return;
   }
 

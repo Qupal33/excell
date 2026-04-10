@@ -1,43 +1,57 @@
+const fs = require("fs/promises");
 const path = require("path");
-const ExcelJS = require("exceljs");
 const XLSX = require("xlsx");
 
 const INVALID_SHEET_NAME_PATTERN = /[*?:\\/[\]]/g;
+const SOURCE_SHEET_NAME = "За неделю";
+const EXCEL_EXTENSIONS = new Set([".xlsx", ".xlsm", ".xls"]);
+const MONTH_NAMES = [
+  "январь",
+  "февраль",
+  "март",
+  "апрель",
+  "май",
+  "июнь",
+  "июль",
+  "август",
+  "сентябрь",
+  "октябрь",
+  "ноябрь",
+  "декабрь"
+];
 
 const REPORTS = [
   {
-    id: "money-vr-march",
+    id: "monthly-plan-report",
     code: "Отчёт №1",
-    name: "Деньги ВР _март",
+    name: "План продаж по месяцу",
     description:
-      "Сценарий подготовки итогового отчёта на основе плана и свода по поступлению денежных средств.",
-    stageLabel: "Черновой контур",
+      "Берёт лист \"За неделю\" из выбранного плана продаж, находит итоговый шаблон по месяцу выбранной даты и записывает данные в лист месяца итогового документа.",
+    stageLabel: "Простой сценарий",
     sources: [
       {
         id: "planFile",
         label: "Файл плана продаж",
-        hint: "Excel-файл плана продаж в формате .xlsx, .xlsm или .xls.",
+        hint:
+          "Excel-файл плана продаж в формате .xlsx, .xlsm или .xls. Из него будет скопирован лист \"За неделю\".",
         dialogTitle: "Выберите файл плана продаж"
       },
       {
-        id: "cashflowFile",
-        label: "Файл свода по поступлениям",
-        hint: "Excel-файл свода по поступлению денежных средств в формате .xlsx, .xlsm или .xls.",
-        dialogTitle: "Выберите файл свода по поступлениям"
+        id: "templateDirectory",
+        label: "Папка с итоговыми шаблонами",
+        hint:
+          "Выберите папку, где лежат месячные итоговые файлы. Приложение само найдёт шаблон, в имени которого есть нужный месяц из выбранной даты.",
+        dialogTitle: "Выберите папку с итоговыми шаблонами",
+        selectionType: "directory"
       }
     ],
     parameters: [
       {
-        id: "reportPeriod",
-        label: "Период отчёта",
-        placeholder: "Например: март 2026",
-        defaultValue: "март 2026"
-      },
-      {
         id: "reportDate",
-        label: "Дата свода",
+        label: "Дата отчёта",
         placeholder: "Например: 18.03.2026",
-        defaultValue: "18.03.2026"
+        defaultValue: "2026-03-18",
+        inputType: "date"
       }
     ]
   }
@@ -58,7 +72,7 @@ function findReport(reportId) {
 }
 
 function normalizeFileName(value) {
-  return value
+  return String(value || "")
     .replace(/[\\/:*?"<>|]+/g, "_")
     .replace(/\s+/g, " ")
     .trim();
@@ -72,54 +86,80 @@ function sanitizeWorksheetName(value, fallbackName) {
   return (cleaned || fallbackName || "Лист").slice(0, 31);
 }
 
-function normalizeSourceValue(cell) {
-  if (!cell) {
-    return null;
+function capitalizeFirstLetter(value) {
+  if (!value) {
+    return "";
   }
 
-  if (cell.f) {
-    return {
-      formula: cell.f,
-      result: cell.v ?? null
-    };
-  }
-
-  if (cell.t === "d" && cell.v instanceof Date) {
-    return cell.v;
-  }
-
-  if (cell.t === "e") {
-    return cell.w || cell.v || null;
-  }
-
-  return cell.v ?? null;
+  return value.charAt(0).toUpperCase() + value.slice(1);
 }
 
-function getWorksheetStats(sheet) {
-  const range = XLSX.utils.decode_range(sheet["!ref"] || "A1:A1");
+function parseReportDate(value) {
+  const normalizedValue = String(value || "").trim();
+
+  if (!normalizedValue) {
+    throw new Error("Укажите дату отчёта.");
+  }
+
+  let year;
+  let month;
+  let day;
+
+  const dotMatch = normalizedValue.match(/^(\d{2})\.(\d{2})\.(\d{4})$/);
+
+  if (dotMatch) {
+    day = Number(dotMatch[1]);
+    month = Number(dotMatch[2]);
+    year = Number(dotMatch[3]);
+  } else {
+    const isoMatch = normalizedValue.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+
+    if (!isoMatch) {
+      throw new Error(
+        "Неверный формат даты. Используйте dd.mm.yyyy или yyyy-mm-dd."
+      );
+    }
+
+    year = Number(isoMatch[1]);
+    month = Number(isoMatch[2]);
+    day = Number(isoMatch[3]);
+  }
+
+  const reportDate = new Date(year, month - 1, day);
+
+  if (
+    Number.isNaN(reportDate.getTime()) ||
+    reportDate.getFullYear() !== year ||
+    reportDate.getMonth() !== month - 1 ||
+    reportDate.getDate() !== day
+  ) {
+    throw new Error("Некорректная дата отчёта.");
+  }
+
+  return reportDate;
+}
+
+function getReportPeriodInfo(reportDateValue) {
+  const reportDate = parseReportDate(reportDateValue);
+  const monthName = MONTH_NAMES[reportDate.getMonth()];
+  const year = reportDate.getFullYear();
 
   return {
-    rowCount: range.e.r + 1,
-    columnCount: range.e.c + 1
+    reportDate,
+    monthName,
+    titleMonthName: capitalizeFirstLetter(monthName),
+    year,
+    sheetName: `${monthName} ${year}`,
+    displayDate: `${String(reportDate.getDate()).padStart(2, "0")}.${String(
+      reportDate.getMonth() + 1
+    ).padStart(2, "0")}.${reportDate.getFullYear()}`
   };
-}
-
-function getColumnWidths(sheet) {
-  return Array.isArray(sheet["!cols"]) ? sheet["!cols"] : [];
-}
-
-function getRowHeights(sheet) {
-  return Array.isArray(sheet["!rows"]) ? sheet["!rows"] : [];
-}
-
-function getMerges(sheet) {
-  return Array.isArray(sheet["!merges"]) ? sheet["!merges"] : [];
 }
 
 function loadWorkbook(filePath) {
   const extension = path.extname(filePath).toLowerCase();
 
-  if (![".xlsx", ".xlsm", ".xls"].includes(extension)) {
+  if (!EXCEL_EXTENSIONS.has(extension)) {
     throw new Error(
       `Формат ${extension || "файла"} не поддерживается. Используйте Excel-файл .xlsx, .xlsm или .xls.`
     );
@@ -130,14 +170,12 @@ function loadWorkbook(filePath) {
       cellDates: true,
       cellFormula: true,
       cellNF: true,
+      cellStyles: true,
+      bookVBA: true,
       dense: false
     });
 
-    return {
-      filePath,
-      sheetNames: workbook.SheetNames,
-      sheets: workbook.Sheets
-    };
+    return workbook;
   } catch (error) {
     const message = String(error?.message || "");
 
@@ -147,194 +185,184 @@ function loadWorkbook(filePath) {
       );
     }
 
-    throw new Error(`Не удалось открыть Excel-файл "${path.basename(filePath)}": ${message}`);
+    throw new Error(
+      `Не удалось открыть Excel-файл "${path.basename(filePath)}": ${message}`
+    );
   }
 }
 
-function copySheetValues(sourceSheet, targetSheet, sourceFileLabel) {
-  const rangeRef = sourceSheet["!ref"] || "A1:A1";
-  const range = XLSX.utils.decode_range(rangeRef);
+function normalizeSearchValue(value) {
+  return String(value || "")
+    .toLowerCase()
+    .replaceAll("ё", "е");
+}
 
-  getColumnWidths(sourceSheet).forEach((column, index) => {
-    const targetColumn = targetSheet.getColumn(index + 1);
+async function resolveTemplateFile(templateDirectory, periodInfo) {
+  const directoryPath = String(templateDirectory || "").trim();
 
-    if (typeof column?.wch === "number" && Number.isFinite(column.wch)) {
-      targetColumn.width = Math.max(column.wch, 10);
-    }
+  if (!directoryPath) {
+    throw new Error("Не выбрана папка с итоговыми шаблонами.");
+  }
 
-    if (column?.hidden) {
-      targetColumn.hidden = true;
-    }
-  });
+  let entries;
 
-  getRowHeights(sourceSheet).forEach((row, index) => {
-    if (typeof row?.hpt === "number" && Number.isFinite(row.hpt)) {
-      targetSheet.getRow(index + 1).height = row.hpt;
-    }
-  });
+  try {
+    entries = await fs.readdir(directoryPath, { withFileTypes: true });
+  } catch (error) {
+    throw new Error(
+      `Не удалось прочитать папку с шаблонами "${path.basename(directoryPath) || directoryPath}": ${error.message}`
+    );
+  }
 
-  for (let row = range.s.r; row <= range.e.r; row += 1) {
-    for (let column = range.s.c; column <= range.e.c; column += 1) {
-      const address = XLSX.utils.encode_cell({ r: row, c: column });
-      const sourceCell = sourceSheet[address];
-      const targetCell = targetSheet.getCell(row + 1, column + 1);
+  const monthToken = normalizeSearchValue(periodInfo.monthName);
+  const yearToken = String(periodInfo.year);
 
-      targetCell.value = normalizeSourceValue(sourceCell);
+  const candidates = entries
+    .filter((entry) => entry.isFile())
+    .map((entry) => {
+      const extension = path.extname(entry.name).toLowerCase();
+      const normalizedName = normalizeSearchValue(entry.name);
 
-      if (sourceCell?.z) {
-        targetCell.numFmt = sourceCell.z;
+      if (!EXCEL_EXTENSIONS.has(extension) || !normalizedName.includes(monthToken)) {
+        return null;
       }
-    }
-  }
 
-  getMerges(sourceSheet).forEach((merge) => {
-    targetSheet.mergeCells(
-      merge.s.r + 1,
-      merge.s.c + 1,
-      merge.e.r + 1,
-      merge.e.c + 1
+      let score = 10;
+
+      if (normalizedName.includes(yearToken)) {
+        score += 5;
+      }
+
+      if (normalizedName.startsWith(monthToken)) {
+        score += 2;
+      }
+
+      return {
+        filePath: path.join(directoryPath, entry.name),
+        name: entry.name,
+        score
+      };
+    })
+    .filter(Boolean)
+    .sort((left, right) => {
+      if (right.score !== left.score) {
+        return right.score - left.score;
+      }
+
+      return left.name.localeCompare(right.name, "ru");
+    });
+
+  if (candidates.length === 0) {
+    throw new Error(
+      `В папке "${path.basename(directoryPath) || directoryPath}" не найден шаблон Excel с месяцем "${periodInfo.titleMonthName}".`
     );
-  });
-
-  targetSheet.getCell("A1").note = `Источник: ${sourceFileLabel}`;
-}
-
-function applyHeaderStyle(cell) {
-  cell.font = {
-    bold: true,
-    color: { argb: "FFF7F2E6" }
-  };
-  cell.fill = {
-    type: "pattern",
-    pattern: "solid",
-    fgColor: { argb: "FF204E36" }
-  };
-  cell.alignment = {
-    vertical: "middle",
-    horizontal: "left"
-  };
-  cell.border = {
-    top: { style: "thin", color: { argb: "FF173C2A" } },
-    left: { style: "thin", color: { argb: "FF173C2A" } },
-    bottom: { style: "thin", color: { argb: "FF173C2A" } },
-    right: { style: "thin", color: { argb: "FF173C2A" } }
-  };
-}
-
-function applyBodyStyle(cell) {
-  cell.border = {
-    top: { style: "thin", color: { argb: "FFD7D1C2" } },
-    left: { style: "thin", color: { argb: "FFD7D1C2" } },
-    bottom: { style: "thin", color: { argb: "FFD7D1C2" } },
-    right: { style: "thin", color: { argb: "FFD7D1C2" } }
-  };
-  cell.alignment = {
-    vertical: "middle",
-    horizontal: "left",
-    wrapText: true
-  };
-}
-
-function buildSummarySheet(workbook, report, payload, planWorkbook, cashflowWorkbook) {
-  const sheet = workbook.addWorksheet("Свод");
-
-  sheet.columns = [
-    { header: "Показатель", key: "label", width: 34 },
-    { header: "Значение", key: "value", width: 72 }
-  ];
-
-  sheet.getRow(1).height = 22;
-  sheet.getRow(1).eachCell(applyHeaderStyle);
-
-  const rows = [
-    ["Отчёт", report.name],
-    ["Период", payload.parameters.reportPeriod || ""],
-    ["Дата свода", payload.parameters.reportDate || ""],
-    ["Файл плана", path.basename(payload.files.planFile)],
-    ["Файл свода", path.basename(payload.files.cashflowFile)],
-    ["Листов в плане", planWorkbook.sheetNames.length],
-    ["Листов в своде", cashflowWorkbook.sheetNames.length],
-    [
-      "Комментарий",
-      "Точное заполнение итогового файла по ячейкам будет добавлено после получения карты переноса данных."
-    ]
-  ];
-
-  rows.forEach((row) => {
-    const inserted = sheet.addRow(row);
-    inserted.eachCell(applyBodyStyle);
-  });
-
-  sheet.addRow([]);
-  const detailHeader = sheet.addRow(["Источник", "Лист / строк"]);
-  detailHeader.eachCell(applyHeaderStyle);
-
-  planWorkbook.sheetNames.forEach((sheetName) => {
-    const stats = getWorksheetStats(planWorkbook.sheets[sheetName]);
-    const row = sheet.addRow([
-      "План",
-      `${sheetName} / строк: ${stats.rowCount}, столбцов: ${stats.columnCount}`
-    ]);
-    row.eachCell(applyBodyStyle);
-  });
-
-  cashflowWorkbook.sheetNames.forEach((sheetName) => {
-    const stats = getWorksheetStats(cashflowWorkbook.sheets[sheetName]);
-    const row = sheet.addRow([
-      "Свод поступлений",
-      `${sheetName} / строк: ${stats.rowCount}, столбцов: ${stats.columnCount}`
-    ]);
-    row.eachCell(applyBodyStyle);
-  });
-
-  sheet.views = [{ state: "frozen", ySplit: 1 }];
-}
-
-async function buildMoneyVrMarchReport(report, payload) {
-  const requiredFiles = ["planFile", "cashflowFile"];
-
-  for (const fileId of requiredFiles) {
-    if (!payload.files?.[fileId]) {
-      const fileLabel = report.sources.find((item) => item.id === fileId)?.label || fileId;
-      throw new Error(`Не выбран обязательный источник: ${fileLabel}.`);
-    }
   }
 
+  return candidates[0].filePath;
+}
+
+function cloneValue(value) {
+  if (value instanceof Date) {
+    return new Date(value.getTime());
+  }
+
+  if (Array.isArray(value)) {
+    return value.map((item) => cloneValue(item));
+  }
+
+  if (value && typeof value === "object") {
+    const cloned = {};
+
+    for (const [key, nestedValue] of Object.entries(value)) {
+      cloned[key] = cloneValue(nestedValue);
+    }
+
+    return cloned;
+  }
+
+  return value;
+}
+
+function cloneSheet(sourceSheet) {
+  const targetSheet = {};
+
+  for (const [key, value] of Object.entries(sourceSheet || {})) {
+    targetSheet[key] = cloneValue(value);
+  }
+
+  return targetSheet;
+}
+
+function replaceWorksheet(workbook, sheetName, sheet) {
+  const hasSheet = workbook.SheetNames.includes(sheetName);
+  workbook.Sheets[sheetName] = sheet;
+
+  if (!hasSheet) {
+    workbook.SheetNames.push(sheetName);
+  }
+}
+
+function getBookType(filePath) {
+  const extension = path.extname(filePath).toLowerCase();
+
+  if (!EXCEL_EXTENSIONS.has(extension)) {
+    throw new Error(
+      "Неверное расширение итогового файла. Используйте .xlsx, .xlsm или .xls."
+    );
+  }
+
+  return extension.slice(1);
+}
+
+function getDefaultOutputFileName(periodInfo, templateFilePath) {
+  const templateExtension = path.extname(templateFilePath).toLowerCase() || ".xlsx";
+  const templateBaseName = path.basename(templateFilePath, templateExtension).trim();
+  const fallbackBaseName = normalizeFileName(
+    `Итог_${periodInfo.titleMonthName}_${periodInfo.year}`
+  );
+
+  return `${normalizeFileName(templateBaseName || fallbackBaseName)}${templateExtension}`;
+}
+
+async function buildMonthlyPlanReport(_report, payload) {
+  if (!payload.files?.planFile) {
+    throw new Error("Не выбран обязательный источник: файл плана продаж.");
+  }
+
+  if (!payload.files?.templateDirectory) {
+    throw new Error("Не выбрана папка с итоговыми шаблонами.");
+  }
+
+  const periodInfo = getReportPeriodInfo(payload.parameters?.reportDate);
+  const targetSheetName = sanitizeWorksheetName(periodInfo.sheetName, "Отчёт");
   const planWorkbook = loadWorkbook(payload.files.planFile);
-  const cashflowWorkbook = loadWorkbook(payload.files.cashflowFile);
+  const sourceSheet = planWorkbook.Sheets?.[SOURCE_SHEET_NAME];
 
-  const outputWorkbook = new ExcelJS.Workbook();
-  outputWorkbook.creator = "Codex";
-  outputWorkbook.created = new Date();
-  outputWorkbook.modified = new Date();
-
-  buildSummarySheet(outputWorkbook, report, payload, planWorkbook, cashflowWorkbook);
-
-  planWorkbook.sheetNames.forEach((sheetName, index) => {
-    const targetName = sanitizeWorksheetName(`План_${index + 1}_${sheetName}`, `План_${index + 1}`);
-    const target = outputWorkbook.addWorksheet(targetName);
-    copySheetValues(planWorkbook.sheets[sheetName], target, path.basename(payload.files.planFile));
-  });
-
-  cashflowWorkbook.sheetNames.forEach((sheetName, index) => {
-    const targetName = sanitizeWorksheetName(
-      `Поступления_${index + 1}_${sheetName}`,
-      `Поступления_${index + 1}`
+  if (!sourceSheet) {
+    throw new Error(
+      `В файле "${path.basename(payload.files.planFile)}" не найден лист "${SOURCE_SHEET_NAME}".`
     );
-    const target = outputWorkbook.addWorksheet(targetName);
-    copySheetValues(
-      cashflowWorkbook.sheets[sheetName],
-      target,
-      path.basename(payload.files.cashflowFile)
-    );
-  });
+  }
 
-  const period = payload.parameters.reportPeriod || "отчет";
-  const defaultFileName = `${normalizeFileName(`Деньги ВР_${period}`)}.xlsx`;
+  const templateFilePath = await resolveTemplateFile(
+    payload.files.templateDirectory,
+    periodInfo
+  );
+  const outputWorkbook = loadWorkbook(templateFilePath);
+  const targetSheet = cloneSheet(sourceSheet);
+
+  replaceWorksheet(outputWorkbook, targetSheetName, targetSheet);
 
   return {
-    workbook: outputWorkbook,
-    defaultFileName
+    defaultFileName: getDefaultOutputFileName(periodInfo, templateFilePath),
+    defaultExtension: getBookType(templateFilePath),
+    save: async (filePath) => {
+      XLSX.writeFile(outputWorkbook, filePath, {
+        bookType: getBookType(filePath),
+        bookVBA: true,
+        cellStyles: true
+      });
+    }
   };
 }
 
@@ -346,14 +374,19 @@ async function generateReport(payload) {
   const report = findReport(payload.reportId);
 
   switch (report.id) {
-    case "money-vr-march":
-      return buildMoneyVrMarchReport(report, payload);
+    case "monthly-plan-report":
+      return buildMonthlyPlanReport(report, payload);
     default:
-      throw new Error("Для выбранного отчёта ещё не настроена логика формирования.");
+      throw new Error(
+        "Для выбранного отчёта ещё не настроена логика формирования."
+      );
   }
 }
 
 module.exports = {
   getReports,
-  generateReport
+  generateReport,
+  parseReportDate,
+  getReportPeriodInfo,
+  resolveTemplateFile
 };

@@ -7,6 +7,14 @@ const DEFAULT_STATS = {
   totalReportsGenerated: 0
 };
 
+function appendDefaultExtension(filePath, defaultExtension) {
+  if (!filePath || path.extname(filePath)) {
+    return filePath;
+  }
+
+  return `${filePath}.${defaultExtension || "xlsx"}`;
+}
+
 function getStatsFilePath() {
   return path.join(app.getPath("userData"), "report-stats.json");
 }
@@ -26,7 +34,7 @@ async function readStats() {
       return { ...DEFAULT_STATS };
     }
 
-    console.error("Не удалось прочитать статистику отчетов:", error);
+    console.error("Не удалось прочитать статистику отчётов:", error);
     return { ...DEFAULT_STATS };
   }
 }
@@ -91,15 +99,18 @@ ipcMain.handle("stats:get", async () => {
 });
 
 ipcMain.handle("dialog:pick-file", async (_event, source) => {
+  const isDirectory = source?.selectionType === "directory";
   const dialogResult = await dialog.showOpenDialog({
     title: source?.dialogTitle || "Выберите Excel-файл",
-    properties: ["openFile"],
-    filters: [
-      {
-        name: "Excel",
-        extensions: ["xlsx", "xlsm", "xls"]
-      }
-    ]
+    properties: [isDirectory ? "openDirectory" : "openFile"],
+    filters: isDirectory
+      ? undefined
+      : [
+          {
+            name: "Excel",
+            extensions: ["xlsx", "xlsm", "xls"]
+          }
+        ]
   });
 
   if (dialogResult.canceled || dialogResult.filePaths.length === 0) {
@@ -121,7 +132,7 @@ ipcMain.handle("report:generate", async (_event, payload) => {
       filters: [
         {
           name: "Excel",
-          extensions: ["xlsx"]
+          extensions: ["xlsx", "xlsm", "xls"]
         }
       ]
     });
@@ -133,12 +144,17 @@ ipcMain.handle("report:generate", async (_event, payload) => {
       };
     }
 
-    await result.workbook.xlsx.writeFile(saveResult.filePath);
+    const outputPath = appendDefaultExtension(
+      saveResult.filePath,
+      result.defaultExtension
+    );
+
+    await result.save(outputPath);
     const stats = await incrementReportsGeneratedCount();
 
     return {
       success: true,
-      savedTo: saveResult.filePath,
+      savedTo: outputPath,
       totalReportsGenerated: stats.totalReportsGenerated
     };
   } catch (error) {
